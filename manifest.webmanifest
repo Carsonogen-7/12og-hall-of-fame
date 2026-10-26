@@ -1,0 +1,13 @@
+{
+  "name": "12 Ordinary Gentlemen Hall of Fame",
+  "short_name": "12OG HOF",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f2ead5",
+  "theme_color": "#1d5a3e",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
