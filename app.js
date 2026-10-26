@@ -375,8 +375,7 @@ function finish(season, id) {
     return `<article class="panel plaque champ">
       <div class="yr">${s.year}</div>
       <div class="who">${av(s.champ)}<div><b>${esc(nm(s.champ))}</b><span class="muted">${esc(team)}</span></div></div>
-      ${cs && g.corrected ? `<p class="final-score">Won the Week ${g.w} final over ${esc(nm(s.runner))}. A later stat correction made it ${f2(cs[0])}–${f2(cs[1])}, but Sleeper kept the title result.</p>`
-        : cs ? `<p class="final-score">Beat ${esc(nm(s.runner))} ${f2(cs[0])}–${f2(cs[1])} in Week ${g.w}</p>` : ""}
+      ${cs ? `<p class="final-score">Beat ${esc(nm(s.runner))} ${f2(cs[0])}–${f2(cs[1])} in Week ${g.w}${g.corrected ? " (stat correction)" : ""}</p>` : ""}
       <dl><dt>Seed</dt><dd class="num">${ord(seed)}</dd><dt>Runner-up</dt><dd>${esc(nm(s.runner))}</dd><dt>3rd place</dt><dd>${esc(nm(s.third))}</dd><dt>Toilet Bowl</dt><dd>${esc(nm(s.sacko))}</dd></dl>
     </article>`;
   });
