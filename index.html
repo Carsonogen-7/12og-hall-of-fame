@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Live Hall of Fame for the 12 Ordinary Gentlemen fantasy football league.">
+<title>12 Ordinary Gentlemen Hall of Fame</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Graduate&family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@500;600;700&display=swap">
+<style>
+/* Layout: a game-day program. Turf-striped masthead, sticky section nav, then stacked sections that each answer one question. */
+:root {
+  --bg: #eef2ee;
+  --surface: #ffffff;
+  --surface-2: #f5f8f5;
+  --ink: #13201a;
+  --muted: #5a6a61;
+  --line: #d3ddd6;
+  --field: #1d5a3e;
+  --field-ink: #f3f7f2;
+  --stripe: rgba(255,255,255,.07);
+  --gold: #a8741a;
+  --gold-soft: #f6ead2;
+  --silver: #6f7b84;
+  --bronze: #9a5b2c;
+  --rust: #a13d2d;
+  --rust-soft: #f7e3df;
+  --win: #237049;
+  --win-soft: #dcefe3;
+  --focus: #2f7fd1;
+  --display: "Graduate", "Rockwell", "Georgia", serif;
+  --body: "Barlow", "Helvetica Neue", Arial, sans-serif;
+  --num: "Barlow Condensed", "Arial Narrow", "Helvetica Neue", sans-serif;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0c1511; --surface: #13201a; --surface-2: #182820; --ink: #e6ede8; --muted: #93a49a; --line: #263a30;
+  --field: #143f2c; --field-ink: #eef5ef; --stripe: rgba(255,255,255,.05);
+  --gold: #e0ad4c; --gold-soft: #33290f; --silver: #aab5bd; --bronze: #d08a55; --rust: #e07a66; --rust-soft: #3a1c17;
+  --win: #5cc08a; --win-soft: #153526; --focus: #7db6f0; color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #0c1511; --surface: #13201a; --surface-2: #182820; --ink: #e6ede8; --muted: #93a49a; --line: #263a30;
+  --field: #143f2c; --field-ink: #eef5ef; --stripe: rgba(255,255,255,.05);
+  --gold: #e0ad4c; --gold-soft: #33290f; --silver: #aab5bd; --bronze: #d08a55; --rust: #e07a66; --rust-soft: #3a1c17;
+  --win: #5cc08a; --win-soft: #153526; --focus: #7db6f0; color-scheme: dark; }
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; }
+img { max-width: 100%; }
+:root { padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+body { background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 15px; line-height: 1.5; }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--field); }
+.wrap { max-width: 1120px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+h1, h2, h3 { text-wrap: balance; margin: 0; }
+h2 { font-family: var(--display); font-weight: 400; font-size: clamp(1.4rem, 3vw, 1.85rem); letter-spacing: .01em; }
+h3 { font-family: var(--num); font-weight: 700; font-size: 1.05rem; letter-spacing: .06em; text-transform: uppercase; }
+p { margin: 0; }
+.num { font-family: var(--num); font-variant-numeric: tabular-nums; }
+.muted { color: var(--muted); }
+.eyebrow { font-family: var(--num); font-weight: 600; text-transform: uppercase; letter-spacing: .14em; font-size: .78rem; color: var(--muted); }
+button, select { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+/* Masthead */
+.mast { background: var(--field); color: var(--field-ink);
+  background-image: repeating-linear-gradient(90deg, transparent 0 calc(10% - 2px), var(--stripe) calc(10% - 2px) 10%); }
+.mast .wrap { padding-block: 40px 30px; display: grid; gap: 14px; }
+.mast .eyebrow { color: var(--field-ink); opacity: .8; }
+.mast h1 { font-family: var(--display); font-weight: 400; font-size: clamp(2rem, 6.5vw, 3.9rem); line-height: 1.02; }
+.mast .facts { display: flex; flex-wrap: wrap; gap: 6px 18px; font-family: var(--num); font-size: 1rem; letter-spacing: .04em; opacity: .9; }
+.mast .facts span + span::before { content: "·"; margin-right: 18px; opacity: .6; }
+
+/* Sticky nav */
+nav.sections { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--bg); border-bottom: 1px solid var(--line); }
+nav.sections .wrap { display: flex; gap: 4px; overflow-x: auto; padding-block: 8px; scrollbar-width: none; }
+nav.sections a { flex: none; font-family: var(--num); font-weight: 600; text-transform: uppercase; letter-spacing: .08em; font-size: .85rem;
+  color: var(--muted); text-decoration: none; padding: 6px 10px; border-radius: 6px; }
+nav.sections a:hover { color: var(--ink); background: var(--surface); }
+
+main .wrap { display: grid; gap: 56px; padding-block: 36px 64px; }
+section { display: grid; gap: 18px; scroll-margin-top: 64px; min-width: 0; }
+.sec-head { display: grid; gap: 4px; }
+.sec-head p { color: var(--muted); max-width: 65ch; }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; min-width: 0; }
+
+/* Trophy wall */
+.plaques { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; }
+.plaque { padding: 18px; display: grid; gap: 12px; align-content: start; position: relative; }
+.plaque.champ { border-color: var(--gold); box-shadow: inset 0 0 0 1px var(--gold); }
+.plaque .yr { font-family: var(--display); font-size: 2.1rem; line-height: 1; color: var(--gold); }
+.plaque.live .yr { color: var(--muted); }
+.plaque .who { display: flex; gap: 12px; align-items: center; }
+.plaque .who b { display: block; font-size: 1.1rem; }
+.plaque dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; font-size: .9rem; }
+.plaque dt { color: var(--muted); }
+.plaque dd { margin: 0; text-align: right; }
+.final-score { font-family: var(--num); font-size: .95rem; color: var(--muted); }
+
+.av { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; flex: none; background: var(--surface-2); border: 1px solid var(--line); }
+.av.sm { width: 24px; height: 24px; }
+.av.lg { width: 76px; height: 76px; }
+.mgr { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.mgr .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+button.mgr-link { background: none; border: 0; padding: 0; cursor: pointer; text-align: left; }
+button.mgr-link:hover .nm { text-decoration: underline; text-underline-offset: 3px; }
+
+/* Tables */
+.tbl-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: .92rem; }
+th, td { padding: 9px 10px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--line); }
+th:first-child, td:first-child, th.l, td.l { text-align: left; }
+thead th { font-family: var(--num); font-weight: 600; text-transform: uppercase; letter-spacing: .08em; font-size: .78rem; color: var(--muted); background: var(--surface-2); position: sticky; top: 0; }
+thead th button { all: unset; cursor: pointer; }
+thead th button:focus-visible { outline: 2px solid var(--focus); }
+thead th[aria-sort] button::after { content: " ▾"; }
+thead th[aria-sort="ascending"] button::after { content: " ▴"; }
+tbody tr:last-child td { border-bottom: 0; }
+tbody tr:hover td { background: var(--surface-2); }
+td.num, th.num { font-family: var(--num); font-variant-numeric: tabular-nums; font-size: 1rem; }
+tr.cut td { border-bottom: 2px dashed var(--muted); }
+.former td { color: var(--muted); }
+
+.chip { display: inline-block; font-family: var(--num); font-weight: 600; font-size: .78rem; letter-spacing: .06em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; background: var(--surface-2); color: var(--muted); border: 1px solid var(--line); }
+.chip.gold { background: var(--gold-soft); color: var(--gold); border-color: transparent; }
+.chip.rust { background: var(--rust-soft); color: var(--rust); border-color: transparent; }
+.chip.win { background: var(--win-soft); color: var(--win); border-color: transparent; }
+.trophies { color: var(--gold); letter-spacing: 2px; }
+.pos { color: var(--win); } .neg { color: var(--rust); }
+
+/* Records */
+.records { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+.rec { padding: 16px 18px; display: grid; gap: 10px; align-content: start; }
+.rec .big { font-family: var(--num); font-weight: 700; font-size: 2.3rem; line-height: 1; font-variant-numeric: tabular-nums; }
+.rec .big small { font-size: 1rem; font-weight: 500; color: var(--muted); margin-left: 4px; }
+.rec .ctx { font-size: .9rem; color: var(--muted); }
+.rec ol { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; border-top: 1px solid var(--line); padding-top: 10px; font-size: .88rem; }
+.rec ol li { display: flex; justify-content: space-between; gap: 10px; color: var(--muted); }
+.rec ol li span:last-child { font-family: var(--num); font-variant-numeric: tabular-nums; color: var(--ink); white-space: nowrap; }
+.rec ol li span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+
+/* Seasons */
+.tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+.tabs button { border: 1px solid var(--line); background: var(--surface); padding: 6px 14px; border-radius: 999px; cursor: pointer; font-family: var(--num); font-weight: 600; font-size: 1rem; letter-spacing: .04em; }
+.tabs button[aria-selected="true"] { background: var(--field); color: var(--field-ink); border-color: var(--field); }
+.season-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+@media (max-width: 860px) { .season-grid { grid-template-columns: minmax(0, 1fr); } }
+.side { display: grid; gap: 14px; }
+.bracket { padding: 16px; display: grid; gap: 14px; }
+.rounds { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; align-items: center; }
+.round { display: grid; gap: 8px; }
+.round .eyebrow { font-size: .7rem; }
+.bm { border: 1px solid var(--line); border-radius: 6px; font-size: .82rem; overflow: hidden; }
+.bm div { display: flex; justify-content: space-between; gap: 6px; padding: 4px 7px; }
+.bm div + div { border-top: 1px solid var(--line); }
+.bm .w { font-weight: 700; background: var(--win-soft); }
+.bm .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.awards { padding: 16px; display: grid; gap: 10px; }
+.award { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; font-size: .92rem; }
+.award .k { color: var(--muted); }
+.award .v { text-align: right; }
+
+/* H2H */
+.h2h-wrap { overflow-x: auto; }
+.h2h { border-collapse: separate; border-spacing: 2px; font-size: .82rem; }
+.h2h th, .h2h td { border: 0; padding: 0; }
+.h2h thead th { background: none; position: static; padding: 0 0 6px; vertical-align: bottom; }
+.h2h thead th img { display: block; margin: 0 auto; }
+.h2h tbody th { text-align: left; padding-right: 8px; font-weight: 500; }
+.h2h td button { width: 46px; height: 34px; border: 0; border-radius: 4px; cursor: pointer; font-family: var(--num); font-weight: 600; font-size: .9rem; font-variant-numeric: tabular-nums; background: var(--surface-2); color: var(--ink); }
+.h2h td button.up { background: var(--win-soft); color: var(--win); }
+.h2h td button.down { background: var(--rust-soft); color: var(--rust); }
+.h2h td button[aria-pressed="true"] { outline: 2px solid var(--ink); outline-offset: -2px; }
+.h2h td.self { background: repeating-linear-gradient(45deg, var(--line) 0 2px, transparent 2px 6px); border-radius: 4px; }
+.h2h td.none { color: var(--muted); text-align: center; }
+.series { padding: 16px 18px; display: grid; gap: 12px; }
+.series-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; }
+.series-head .score { font-family: var(--num); font-weight: 700; font-size: 1.7rem; font-variant-numeric: tabular-nums; }
+.games { display: grid; gap: 4px; font-size: .9rem; }
+.games div { display: grid; grid-template-columns: 90px 1fr auto; gap: 10px; padding: 5px 0; border-top: 1px solid var(--line); }
+.games div span:last-child { font-family: var(--num); font-variant-numeric: tabular-nums; }
+
+/* Profiles */
+.picker { display: flex; flex-wrap: wrap; gap: 6px; }
+.picker button { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 3px 12px 3px 3px; cursor: pointer; font-size: .88rem; }
+.picker button[aria-pressed="true"] { border-color: var(--field); background: var(--field); color: var(--field-ink); }
+.profile { padding: 20px; display: grid; gap: 22px; }
+.p-head { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; }
+.p-head h3 { font-family: var(--display); font-weight: 400; font-size: 1.6rem; letter-spacing: 0; text-transform: none; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
+.tile { background: var(--surface-2); border-radius: 8px; padding: 10px 12px; display: grid; gap: 2px; }
+.tile b { font-family: var(--num); font-size: 1.6rem; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.tile span { font-size: .8rem; color: var(--muted); }
+.p-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 22px; }
+.p-cols > div { display: grid; gap: 8px; align-content: start; min-width: 0; }
+.list { display: grid; gap: 0; font-size: .9rem; }
+.list div { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; border-top: 1px solid var(--line); }
+.list div > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.list div > span:last-child { font-family: var(--num); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* Awards */
+.honors { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 14px; }
+.honor { padding: 16px 18px; display: grid; gap: 10px; align-content: start; }
+.honor .what { font-size: .88rem; color: var(--muted); }
+.honor .stat { font-family: var(--num); font-size: 1.05rem; }
+
+footer .wrap { padding-block: 24px 40px; border-top: 1px solid var(--line); color: var(--muted); font-size: .88rem; display: grid; gap: 6px; }
+
+/* App chrome */
+.status-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; font-size: .9rem; }
+.status-row .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--field-ink); opacity: .5; display: inline-block; margin-right: 6px; }
+.status-row.ok .dot { background: #7fe0a6; opacity: 1; }
+.status-row.err .dot { background: #ff9b8a; opacity: 1; }
+.btn { border: 1px solid currentColor; background: transparent; border-radius: 6px; padding: 4px 12px; cursor: pointer; font-family: var(--num); font-weight: 600; letter-spacing: .06em; text-transform: uppercase; font-size: .8rem; }
+.btn:disabled { opacity: .5; cursor: progress; }
+.loading { padding-block: 60px; text-align: center; color: var(--muted); }
+.loading.err { color: var(--rust); }
+.scoreboard { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; }
+.sb { padding: 10px 12px; display: grid; gap: 4px; font-size: .9rem; }
+.sb div { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+.sb .lead { font-weight: 700; }
+.sb .num { font-size: 1.05rem; }
+</style>
+</head>
+<body>
+
+<header class="mast">
+  <div class="wrap">
+    <span class="eyebrow">Fantasy Football Hall of Fame</span>
+    <h1>12 Ordinary Gentlemen</h1>
+    <div class="facts" id="facts"></div>
+    <div class="status-row" id="status-row"><span><span class="dot"></span><span id="status">Loading live data from Sleeper…</span></span><button class="btn" id="refresh" type="button">Refresh</button></div>
+  </div>
+</header>
+
+<nav class="sections" aria-label="Sections">
+  <div class="wrap">
+    <a href="#champions">Champions</a>
+    <a href="#race">2026 Race</a>
+    <a href="#alltime">All-Time</a>
+    <a href="#records">Record Book</a>
+    <a href="#seasons">Seasons</a>
+    <a href="#rivalries">Rivalries</a>
+    <a href="#managers">Managers</a>
+    <a href="#awards">Awards</a>
+  </div>
+</nav>
+
+<main>
+  <div class="wrap loading" id="loading">Loading four seasons of league history from Sleeper…</div>
+  <div class="wrap" id="app" hidden>
+    <section id="champions">
+      <div class="sec-head">
+        <h2>Champions</h2>
+        <p>Every title in league history, with the final that decided it.</p>
+      </div>
+      <div class="plaques" id="plaques"></div>
+    </section>
+
+    <section id="race">
+      <div class="sec-head">
+        <h2 id="race-title">The 2026 Race</h2>
+        <p id="race-sub"></p>
+      </div>
+      <div class="panel tbl-wrap"><table id="race-table"></table></div>
+      <div class="sec-head" id="sb-head"><h3 id="sb-title"></h3></div>
+      <div class="scoreboard" id="scoreboard"></div>
+    </section>
+
+    <section id="alltime">
+      <div class="sec-head">
+        <h2>All-Time Standings</h2>
+        <p>Regular-season record plus playoff results for all 13 managers. "All-play" counts your record if you had played every team every week. "Luck" is actual wins minus the wins your all-play rate predicts. Click a column to sort.</p>
+      </div>
+      <div class="panel tbl-wrap"><table id="alltime-table"></table></div>
+    </section>
+
+    <section id="records">
+      <div class="sec-head">
+        <h2>Record Book</h2>
+        <p>Single games count every matchup: regular season, playoffs and consolation games.</p>
+      </div>
+      <div class="records" id="record-cards"></div>
+    </section>
+
+    <section id="seasons">
+      <div class="sec-head">
+        <h2>Season by Season</h2>
+        <p>Final standings, the playoff bracket and the season's honors.</p>
+      </div>
+      <div class="tabs" role="tablist" id="season-tabs"></div>
+      <div class="season-grid">
+        <div class="panel tbl-wrap"><table id="season-table"></table></div>
+        <div class="side">
+          <div class="panel bracket" id="season-bracket"></div>
+          <div class="panel awards" id="season-awards"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="rivalries">
+      <div class="sec-head">
+        <h2>Head-to-Head</h2>
+        <p>Each cell is the row manager's record against the column manager, across every game they've played. Pick a cell to see the full series.</p>
+      </div>
+      <div class="panel h2h-wrap" style="padding:14px"><table class="h2h" id="h2h"></table></div>
+      <div class="panel series" id="series"></div>
+    </section>
+
+    <section id="managers">
+      <div class="sec-head">
+        <h2>Manager Profiles</h2>
+        <p>Career numbers, finishes, rivals and the players who carried each roster.</p>
+      </div>
+      <div class="picker" id="picker"></div>
+      <div class="panel profile" id="profile"></div>
+    </section>
+
+    <section id="awards">
+      <div class="sec-head">
+        <h2>Awards &amp; Superlatives</h2>
+        <p>The honors nobody asked for, settled by the numbers.</p>
+      </div>
+      <div class="honors" id="honors"></div>
+    </section>
+  </div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p id="foot-src"></p>
+    <p>Managers are tracked by Sleeper account, so team renames carry over. The manager who left after 2025 keeps their own record; the replacement starts fresh in 2026.</p>
+  </div>
+</footer>
+
+<script src="app.js" defer></script>
+</body>
+</html>
