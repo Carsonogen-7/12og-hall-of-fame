@@ -223,6 +223,60 @@ footer .wrap { padding-block: 24px 40px; border-top: 1px solid var(--line); colo
 .sb div { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
 .sb .lead { font-weight: 700; }
 .sb .num { font-size: 1.05rem; }
+/* Personalization */
+tr.me td, tr.me th { background: var(--gold-soft) !important; }
+.list div.me { background: var(--gold-soft); margin-inline: -6px; padding-inline: 6px; border-radius: 4px; }
+.sb.mine, .trade.mine { border-color: var(--gold); box-shadow: inset 0 0 0 1px var(--gold); }
+.me-area { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-left: auto; }
+.me-form { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.me-form input { font: inherit; padding: 4px 8px; border-radius: 6px; border: 1px solid currentColor; background: transparent; color: inherit; width: 12em; }
+.me-form input::placeholder { color: inherit; opacity: .6; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.small { font-size: .85rem; }
+
+/* Newsletter */
+.nl-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+select { border: 1px solid var(--line); background: var(--surface); border-radius: 6px; padding: 6px 10px; font-size: .95rem; }
+.btn-ink { color: var(--ink); }
+.gazette { padding: 22px; display: grid; gap: 20px; }
+.nl-head { display: grid; gap: 8px; border-bottom: 3px double var(--line); padding-bottom: 14px; }
+.nl-lead { font-size: clamp(1.1rem, 2.4vw, 1.3rem); font-weight: 500; line-height: 1.45; max-width: 62ch; }
+.nl-mine { background: var(--gold-soft); border-radius: 8px; padding: 12px 14px; display: grid; gap: 4px; }
+.nl-awards { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; }
+.nl-award { background: var(--surface-2); border-radius: 8px; padding: 10px 12px; display: grid; gap: 2px; align-content: start; min-width: 0; }
+.nl-award b { font-weight: 600; }
+.nl-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 22px; }
+.nl-cols > div { display: grid; gap: 8px; align-content: start; min-width: 0; }
+
+/* Draft */
+.callouts { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
+.callouts .nl-award { background: var(--surface); }
+.grade { font-family: var(--display); font-size: 1.15rem; color: var(--field); display: inline-block; min-width: 2.2em; }
+.grade.big { font-size: 1.9rem; }
+table.clickable tbody tr { cursor: pointer; }
+table.clickable tbody tr.open td { box-shadow: inset 0 -2px 0 var(--field); }
+
+/* Trades */
+.trade-list { display: grid; gap: 12px; }
+.trade { padding: 14px 16px; display: grid; gap: 10px; }
+.trade.reversed { opacity: .6; }
+.trade-head { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; align-items: center; }
+.bar { display: flex; height: 6px; border-radius: 3px; overflow: hidden; gap: 2px; }
+.seg.s0, .key.s0 { background: var(--field); }
+.seg.s1, .key.s1 { background: var(--gold); }
+.seg.s2, .key.s2 { background: var(--rust); }
+.key { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+.trade-sides { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+.side-col { display: grid; gap: 4px; align-content: start; min-width: 0; }
+.side-top { display: flex; align-items: center; gap: 8px; }
+.side-top .num { margin-left: auto; font-weight: 700; font-size: 1.1rem; }
+details { border-top: 1px solid var(--line); }
+summary { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; cursor: pointer; list-style: none; font-size: .92rem; }
+summary::-webkit-details-marker { display: none; }
+summary > span:first-child::before { content: "▸ "; color: var(--muted); }
+details[open] summary > span:first-child::before { content: "▾ "; }
+.wk-chips { display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 0 0 8px 14px; font-size: .85rem; color: var(--muted); }
+.wk-chips b { color: var(--ink); font-weight: 600; }
 </style>
 </head>
 <body>
@@ -232,7 +286,7 @@ footer .wrap { padding-block: 24px 40px; border-top: 1px solid var(--line); colo
     <span class="eyebrow">Fantasy Football Hall of Fame</span>
     <h1>12 Ordinary Gentlemen</h1>
     <div class="facts" id="facts"></div>
-    <div class="status-row" id="status-row"><span><span class="dot"></span><span id="status">Loading live data from Sleeper…</span></span><button class="btn" id="refresh" type="button">Refresh</button></div>
+    <div class="status-row" id="status-row"><span><span class="dot"></span><span id="status">Loading live data from Sleeper…</span></span><button class="btn" id="refresh" type="button">Refresh</button><span class="me-area" id="me-area"></span></div>
   </div>
 </header>
 
@@ -240,9 +294,12 @@ footer .wrap { padding-block: 24px 40px; border-top: 1px solid var(--line); colo
   <div class="wrap">
     <a href="#champions">Champions</a>
     <a href="#race">2026 Race</a>
+    <a href="#newsletter">Newsletter</a>
     <a href="#alltime">All-Time</a>
     <a href="#records">Record Book</a>
     <a href="#seasons">Seasons</a>
+    <a href="#draft">Draft</a>
+    <a href="#trades">Trades</a>
     <a href="#rivalries">Rivalries</a>
     <a href="#managers">Managers</a>
     <a href="#awards">Awards</a>
@@ -268,6 +325,19 @@ footer .wrap { padding-block: 24px 40px; border-top: 1px solid var(--line); colo
       <div class="panel tbl-wrap"><table id="race-table"></table></div>
       <div class="sec-head" id="sb-head"><h3 id="sb-title"></h3></div>
       <div class="scoreboard" id="scoreboard"></div>
+    </section>
+
+    <section id="newsletter">
+      <div class="sec-head">
+        <h2>The Gentlemen's Gazette</h2>
+        <p>A recap of every week, written as soon as Sleeper marks the week final. Share sends a link to that week's issue.</p>
+      </div>
+      <div class="nl-bar">
+        <label for="nl-week" class="sr">Week</label>
+        <select id="nl-week"></select>
+        <button class="btn btn-ink" id="nl-share" type="button">Share</button>
+      </div>
+      <article class="panel gazette" id="nl-body"></article>
     </section>
 
     <section id="alltime">
@@ -299,6 +369,32 @@ footer .wrap { padding-block: 24px 40px; border-top: 1px solid var(--line); colo
           <div class="panel awards" id="season-awards"></div>
         </div>
       </div>
+    </section>
+
+    <section id="draft">
+      <div class="sec-head">
+        <h2>Draft Grades</h2>
+        <p>One grade per team, set right after the draft. Pick a row to see every pick.</p>
+      </div>
+      <div class="tabs" role="tablist" id="draft-tabs"></div>
+      <div class="callouts" id="draft-callouts"></div>
+      <div class="panel tbl-wrap"><table id="draft-table" class="clickable"></table></div>
+      <div class="panel series" id="draft-detail"></div>
+      <p class="muted small" id="draft-note"></p>
+    </section>
+
+    <section id="trades">
+      <div class="sec-head">
+        <h2>Trade History</h2>
+        <p>Every trade and who won it. A side's score counts only points its new players scored in that manager's starting lineup after the trade. Traded picks count the player drafted with them. Open a player to see their week-by-week points.</p>
+      </div>
+      <div class="panel tbl-wrap"><table id="tr-summary"></table></div>
+      <div class="nl-bar">
+        <label for="tr-mgr" class="sr">Manager</label><select id="tr-mgr"></select>
+        <label for="tr-sort" class="sr">Sort</label><select id="tr-sort"><option value="new">Newest first</option><option value="lopsided">Most lopsided</option></select>
+        <span class="muted" id="tr-count"></span>
+      </div>
+      <div class="trade-list" id="tr-list"></div>
     </section>
 
     <section id="rivalries">

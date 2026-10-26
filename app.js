@@ -1,7 +1,7 @@
 // 12 Ordinary Gentlemen Hall of Fame: pulls the league's full history from Sleeper's public API in the browser.
 const LEAGUE_ID = "1378479378115072000";
 const API = "https://api.sleeper.app/v1/";
-const CACHE = "hof:v1:";
+const CACHE = "hof:v2:";
 const REFRESH_MS = 5 * 60 * 1000;
 const LIVE_REFRESH_MS = 60 * 1000;
 
@@ -26,14 +26,26 @@ async function fetchSeason(lid) {
   // In-season: every scored week plus the week being played now.
   const last = done ? 18 : Math.max(st.last_scored_leg || 0, st.leg || 0);
   const weeks = Array.from({ length: last }, (_, i) => i + 1);
-  const [users, rosters, winners, losers, ...mus] = await Promise.all([
+  const [users, rosters, winners, losers, draftList, ...rest] = await Promise.all([
     get(`league/${lid}/users`), get(`league/${lid}/rosters`),
-    get(`league/${lid}/winners_bracket`), get(`league/${lid}/losers_bracket`),
+    get(`league/${lid}/winners_bracket`), get(`league/${lid}/losers_bracket`), get(`league/${lid}/drafts`),
     ...weeks.map((w) => get(`league/${lid}/matchups/${w}`)),
+    ...weeks.map((w) => get(`league/${lid}/transactions/${w}`)),
   ]);
+  const mus = rest.slice(0, weeks.length), txs = rest.slice(weeks.length);
   const matchups = {};
   weeks.forEach((w, i) => { if (mus[i] && mus[i].length) matchups[w] = mus[i]; });
-  return { league, users, rosters, winners: winners || [], losers: losers || [], matchups };
+  const trades = txs.flat().filter((t) => t && t.type === "trade" && t.status === "complete")
+    .map((t) => ({ id: t.transaction_id, leg: t.leg, created: t.created, roster_ids: t.roster_ids, adds: t.adds || {}, draft_picks: t.draft_picks || [], waiver_budget: t.waiver_budget || [] }));
+  const drafts = await Promise.all((draftList || []).filter((d) => d.status === "complete").map(async (d) => {
+    const [draft, picks] = await Promise.all([get(`draft/${d.draft_id}`), get(`draft/${d.draft_id}/picks`)]);
+    return {
+      id: d.draft_id, season: d.season, start: draft.start_time, slots: draft.slot_to_roster_id || {}, rounds: (draft.settings || {}).rounds,
+      picks: picks.map((p) => ({ no: p.pick_no, round: p.round, slot: p.draft_slot, rid: p.roster_id, by: p.picked_by, pid: p.player_id, keeper: !!p.is_keeper,
+        name: `${(p.metadata || {}).first_name || ""} ${(p.metadata || {}).last_name || ""}`.trim(), pos: (p.metadata || {}).position || "" })),
+    };
+  }));
+  return { league, users, rosters, winners: winners || [], losers: losers || [], matchups, trades, drafts };
 }
 
 // Walks back through previous_league_id. Finished seasons never change, so they are cached.
@@ -52,6 +64,15 @@ async function fetchHistory(force) {
   return out;
 }
 
+// Draft-day ADP snapshots, saved once per draft by the GitHub Action so grades never drift.
+async function fetchSnapshots(years) {
+  const out = {};
+  await Promise.all(years.map(async (y) => {
+    try { const r = await fetch(`drafts/${y}.json`); if (r.ok) out[y] = await r.json(); } catch { /* no snapshot yet */ }
+  }));
+  return out;
+}
+
 async function fetchPlayers() {
   try {
     const r = await fetch("players.json");
@@ -59,9 +80,25 @@ async function fetchPlayers() {
   } catch { return {}; }
 }
 
-function compute(raw, P) {
+// Best possible lineup from everyone on the roster that week, for "points left on the bench".
+const FLEX = { FLEX: ["RB", "WR", "TE"], WRRB_FLEX: ["RB", "WR"], REC_FLEX: ["WR", "TE"], SUPER_FLEX: ["QB", "RB", "WR", "TE"] };
+function optimal(entry, slots, P) {
+  const pool = Object.entries(entry.players_points || {})
+    .map(([pid, pts]) => ({ pos: (P[pid] || [])[1] || (/^[A-Z]{2,3}$/.test(pid) ? "DEF" : ""), pts }))
+    .sort((a, b) => b.pts - a.pts);
+  let total = 0;
+  for (const s of slots.slice().sort((a, b) => (FLEX[a] ? 1 : 0) - (FLEX[b] ? 1 : 0))) {
+    const ok = FLEX[s] || [s];
+    const i = pool.findIndex((p) => ok.includes(p.pos));
+    if (i >= 0) { total += pool[i].pts; pool.splice(i, 1); }
+  }
+  return Math.max(+total.toFixed(2), entry.points || 0);
+}
+
+function compute(raw, P, snaps = {}) {
   const seasonsRaw = raw.slice().sort((a, b) => a.league.season.localeCompare(b.league.season));
-  const managers = {}, seasons = [], games = [], perfs = [], weekly = [];
+  const managers = {}, seasons = [], games = [], perfs = [], weekly = [], lineups = [];
+  const r2oBy = {};
   let liveWeek = null;
   for (const s of seasonsRaw) {
     const lg = s.league, yr = lg.season, st = lg.settings || {};
@@ -70,6 +107,8 @@ function compute(raw, P) {
     const lastScored = done ? 99 : (st.last_scored_leg || 0);
     const users = Object.fromEntries(s.users.map((u) => [u.user_id, u]));
     const r2o = Object.fromEntries(s.rosters.map((r) => [r.roster_id, r.owner_id]));
+    r2oBy[yr] = r2o;
+    const slots = (lg.roster_positions || []).filter((p) => !["BN", "IR", "TAXI"].includes(p));
     const teamOf = (o) => (users[o] && users[o].metadata && users[o].metadata.team_name) || (users[o] && users[o].display_name) || "Unknown team";
     for (const r of s.rosters) {
       if (!r.owner_id) continue;
@@ -98,9 +137,12 @@ function compute(raw, P) {
         if (pair.length !== 2) continue;
         const [a, b] = pair;
         yearGames.push({ y: yr, w, a: r2o[a.roster_id], b: r2o[b.roster_id], pa: a.points || 0, pb: b.points || 0, k: playoff ? "po" : "reg" });
-        for (const x of pair) (x.starters || []).forEach((pid, i) => {
-          if (pid && pid !== "0") perfs.push([yr, w, r2o[x.roster_id], pid, (x.starters_points || [])[i] || 0]);
-        });
+        for (const x of pair) {
+          (x.starters || []).forEach((pid, i) => {
+            if (pid && pid !== "0") perfs.push([yr, w, r2o[x.roster_id], pid, (x.starters_points || [])[i] || 0]);
+          });
+          lineups.push([yr, w, r2o[x.roster_id], x.points || 0, optimal(x, slots, P)]);
+        }
       }
     }
     const standings = s.rosters.filter((r) => r.owner_id).map((r) => {
@@ -152,6 +194,49 @@ function compute(raw, P) {
     seasons.push(info);
   }
 
+  // Drafts: each pick credited to the manager whose roster made it.
+  const drafts = [];
+  for (const s of seasonsRaw) for (const d of s.drafts || []) {
+    const r2o = r2oBy[d.season] || r2oBy[s.league.season];
+    drafts.push({ year: d.season, id: d.id, rounds: d.rounds, slots: d.slots, snap: snaps[d.season] || null,
+      picks: d.picks.map((p) => ({ ...p, o: r2o[p.rid] || p.by })).sort((a, b) => a.no - b.no) });
+  }
+  const draftByYear = Object.fromEntries(drafts.map((d) => [d.year, d]));
+
+  // Trades: what each side received. Traded picks resolve to the player taken with them.
+  const trades = [];
+  for (const s of seasonsRaw) {
+    const yr = s.league.season, r2o = r2oBy[yr];
+    for (const t of s.trades || []) {
+      const sides = {};
+      const side = (o) => (sides[o] ||= { o, players: [], picks: [], faab: 0 });
+      (t.roster_ids || []).forEach((r) => side(r2o[r]));
+      for (const [pid, rid] of Object.entries(t.adds)) side(r2o[rid]).players.push(pid);
+      for (const dp of t.draft_picks) {
+        const d = draftByYear[dp.season];
+        let pid = null;
+        if (d) {
+          const slot = Object.entries(d.slots || {}).find(([, rid]) => rid === dp.roster_id);
+          const pk = slot && d.picks.find((p) => p.round === dp.round && p.slot === +slot[0]);
+          if (pk) pid = pk.pid;
+        }
+        side(r2o[dp.owner_id]).picks.push({ season: dp.season, round: dp.round, orig: (r2oBy[dp.season] || r2o)[dp.roster_id], pid });
+      }
+      for (const wb of t.waiver_budget) side(r2o[wb.receiver]).faab += wb.amount || 0;
+      trades.push({ id: t.id, y: yr, leg: t.leg, created: t.created, sides: Object.values(sides).filter((x) => x.o), adds: t.adds, picks: t.draft_picks.length });
+    }
+  }
+  // A trade undone within a day (every player sent straight back) is marked reversed, both halves.
+  trades.sort((a, b) => a.created - b.created);
+  trades.forEach((t, i) => {
+    const ids = Object.keys(t.adds);
+    if (t.reversed || !ids.length || t.picks) return;
+    const back = trades.slice(i + 1).find((u) => !u.reversed && !u.picks && u.created - t.created < 864e5 && u.y === t.y
+      && Object.keys(u.adds).length === ids.length && ids.every((pid) => u.adds[pid] != null && u.adds[pid] !== t.adds[pid]));
+    if (back) t.reversed = back.reversed = true;
+  });
+  trades.reverse();
+
   const pts = {}, best = {};
   for (const p of perfs) {
     const [, , o, pid, v] = p;
@@ -160,10 +245,14 @@ function compute(raw, P) {
   }
   const mvp = Object.fromEntries(Object.entries(pts).map(([o, m]) => [o, Object.entries(m).sort((a, b) => b[1] - a[1]).slice(0, 5)]));
   const topPerfs = perfs.slice().sort((a, b) => b[4] - a[4]).slice(0, 25);
-  const players = new Proxy({}, { get: (_, pid) => P[pid] || [pid, ""] });
+  // Names from draft picks cover anyone missing from players.json.
+  const extra = {};
+  for (const d of drafts) for (const p of d.picks) if (p.name) extra[p.pid] = [p.name, p.pos];
+  const players = new Proxy({}, { get: (_, pid) => P[pid] || extra[pid] || [pid, ""] });
   const curLg = seasonsRaw.at(-1).league;
   return {
     current: curLg.season, managers, seasons, games, weekly, topPerfs, bestPerf: best, mvp, players, liveWeek,
+    perfs, lineups, drafts, trades,
     size: curLg.total_rosters || 12,
     scoring: (curLg.scoring_settings || {}).rec === 1 ? "PPR" : (curLg.scoring_settings || {}).rec === 0.5 ? "Half PPR" : "Standard",
     keepers: (curLg.settings || {}).max_keepers || 0,
@@ -180,6 +269,7 @@ const ord = (n) => n + (["th", "st", "nd", "rd"][(n % 100 - 20) % 10] || ["th", 
 const sum = (a) => a.reduce((x, y) => x + y, 0);
 
 const M = D.managers;
+const ME = window.__me && D.managers[window.__me] ? window.__me : null;
 const IDS = Object.keys(M);
 const CUR = D.current;
 const done = D.seasons.filter((s) => s.done);
@@ -316,7 +406,7 @@ if (live) {
       let n = 0; for (const x of s) { if (x.res === s[0].res) n++; else break; }
       return `<span class="${s[0].res === "W" ? "pos" : "neg"}">${s[0].res}${n}</span>`;
     })();
-    return `<tr class="${r.seed === live.teams ? "cut" : ""}">
+    return `<tr class="${r.seed === live.teams ? "cut" : ""} ${r.o === ME ? "me" : ""}">
       <td class="num">${r.seed}</td><td class="l">${who(r.o)}</td><td class="l muted">${esc(r.team)}${isRookie(r.o) ? ' <span class="chip">New</span>' : ""}</td>
       <td class="num">${r.w}–${r.l}${r.t ? "–" + r.t : ""}</td><td class="num">${f1(r.pf)}</td><td class="num">${f1(r.pa)}</td>
       <td class="num">${f1(r.pf / Math.max(1, gp))}</td><td class="num">${ap.w}–${ap.l}</td><td class="num">${streak}</td></tr>`;
@@ -348,7 +438,7 @@ if (live) {
     const rows = Object.values(C).sort((a, b) => dir * (col.s(a) > col.s(b) ? 1 : col.s(a) < col.s(b) ? -1 : 0) || b.pct - a.pct);
     const head = cols.map((c) => c.sort === false ? `<th>${c.h}</th>` :
       `<th class="${c.l ? "l" : ""}" ${c.k === sortK ? `aria-sort="${dir < 0 ? "descending" : "ascending"}"` : ""}><button data-sort="${c.k}">${c.h}</button></th>`).join("");
-    const body = rows.map((c, i) => `<tr class="${isFormer(c.id) ? "former" : ""}">${cols.map((col) =>
+    const body = rows.map((c, i) => `<tr class="${isFormer(c.id) ? "former" : ""} ${c.id === ME ? "me" : ""}">${cols.map((col) =>
       `<td class="${col.l ? "l" : "num"}">${col.v(c, i)}</td>`).join("")}</tr>`).join("");
     $("#alltime-table").innerHTML = `<thead><tr>${head}</tr></thead><tbody>${body}</tbody>`;
   };
@@ -443,7 +533,7 @@ if (live) {
     const rows = s.standings.map((r) => {
       const f = finish(s, r.o);
       const ap = allPlay[r.o].bySeason[s.year] || { w: 0, l: 0 };
-      return `<tr class="${r.seed === s.teams ? "cut" : ""}"><td class="num">${r.seed}</td><td class="l">${who(r.o)}</td><td class="l muted">${esc(r.team)}</td>
+      return `<tr class="${r.seed === s.teams ? "cut" : ""} ${r.o === ME ? "me" : ""}"><td class="num">${r.seed}</td><td class="l">${who(r.o)}</td><td class="l muted">${esc(r.team)}</td>
         <td class="num">${r.w}–${r.l}${r.t ? "–" + r.t : ""}</td><td class="num">${f1(r.pf)}</td><td class="num">${f1(r.pa)}</td><td class="num">${ap.w}–${ap.l}</td>
         <td class="l">${s.done ? `<span class="chip ${f.cls}">${f.label}</span>` : ""}</td></tr>`;
     }).join("");
@@ -505,7 +595,7 @@ function renderSeries() {
 }
 {
   const head = `<thead><tr><th></th>${order.map((id) => `<th title="${esc(nm(id))}">${av(id, "sm")}</th>`).join("")}</tr></thead>`;
-  const body = order.map((a) => `<tr><th>${who(a)}</th>${order.map((b) => {
+  const body = order.map((a) => `<tr class="${a === ME ? "me" : ""}"><th>${who(a)}</th>${order.map((b) => {
     if (a === b) return `<td class="self"></td>`;
     const g = series(a, b); if (!g.length) return `<td class="none">–</td>`;
     const w = g.filter((s) => s.res === "W").length, l = g.filter((s) => s.res === "L").length;
@@ -521,6 +611,10 @@ function renderSeries() {
     if (!best || score > best[0]) best = [score, a, b];
   }
   pair = [best[1], best[2]];
+  if (ME) {
+    const opp = order.filter((o) => o !== ME).sort((x, y) => series(ME, y).length - series(ME, x).length)[0];
+    if (opp && series(ME, opp).length) pair = [ME, opp];
+  }
   renderSeries();
 }
 
@@ -573,7 +667,7 @@ function renderProfile(id) {
   const ids = Object.values(C).sort((a, b) => (isFormer(a.id) - isFormer(b.id)) || nm(a.id).localeCompare(nm(b.id), undefined, { sensitivity: "base" })).map((c) => c.id);
   $("#picker").innerHTML = ids.map((id) => `<button data-pick="${id}" aria-pressed="false">${av(id, "sm")}${esc(nm(id))}</button>`).join("");
   $("#picker").onclick = (e) => { const b = e.target.closest("button[data-pick]"); if (b) renderProfile(b.dataset.pick); };
-  renderProfile(current && M[current] ? current : (done.at(-1) || {}).champ || IDS[0]);
+  renderProfile(current && M[current] ? current : ME || (done.at(-1) || {}).champ || IDS[0]);
   window.__renderProfile = renderProfile;
 }
 
@@ -616,6 +710,277 @@ function renderProfile(id) {
   $("#honors").innerHTML = out.join("");
 }
 
+/* ---------- newsletter: The Gentlemen's Gazette ---------- */
+{
+  const issues = [];
+  for (const s of D.seasons) {
+    [...new Set(D.games.filter((g) => g.y === s.year).map((g) => g.w))].sort((a, b) => a - b).forEach((w) => issues.push([s.year, w]));
+  }
+  issues.reverse();
+  const key = (i) => `${i[0]}-${i[1]}`;
+  const fromHash = (location.hash.match(/^#week-(\d{4})-(\d{1,2})$/) || []);
+  let sel = (window.__nlPicked && issues.find((i) => key(i) === window.__nlPicked))
+    || (fromHash[1] && issues.find(([y, w]) => y === fromHash[1] && w === +fromHash[2])) || issues[0];
+  if (fromHash[1] && !window.__nlPicked && sel) window.__nlPicked = key(sel);
+
+  const isPlayoff = (y, w) => { const s = D.seasons.find((x) => x.year === y); return s && w >= s.pws; };
+  $("#nl-week").innerHTML = issues.map((i) => `<option value="${key(i)}">${i[0]} · Week ${i[1]}${isPlayoff(i[0], i[1]) ? " (playoffs)" : ""}</option>`).join("");
+  $("#nl-week").onchange = (e) => { window.__nlPicked = e.target.value; sel = issues.find((i) => key(i) === e.target.value); issue(); };
+
+  const recordBefore = (o, y, w) => {
+    const g = sides.filter((s) => s.o === o && s.g.y === y && s.g.k === "reg" && s.g.w < w);
+    return { w: g.filter((s) => s.res === "W").length, l: g.filter((s) => s.res === "L").length, n: g.length };
+  };
+  const table = (y, upto) => {
+    const rows = {};
+    for (const s of sides) if (s.g.y === y && s.g.k === "reg" && s.g.w <= upto) {
+      const r = (rows[s.o] ||= { o: s.o, w: 0, pf: 0 });
+      r.w += s.res === "W" ? 1 : 0; r.pf += s.pf;
+    }
+    return Object.values(rows).sort((a, b) => b.w - a.w || b.pf - a.pf).map((r, i) => ({ ...r, rank: i + 1 }));
+  };
+  const h2hBefore = (a, b, y, w) => {
+    const g = sides.filter((s) => s.o === a && s.opp === b && (s.g.y < y || (s.g.y === y && s.g.w < w)));
+    return [g.filter((s) => s.res === "W").length, g.filter((s) => s.res === "L").length];
+  };
+
+  function issue() {
+    if (!sel) { $("#nl-body").innerHTML = '<p class="muted">No finished weeks yet. The first issue appears once Week 1 is final.</p>'; return; }
+    $("#nl-week").value = key(sel);
+    const [y, w] = sel;
+    const wk = sides.filter((s) => s.g.y === y && s.g.w === w);
+    const one = wk.filter((s) => !s.g.w2);
+    const wins = one.filter((s) => s.res === "W"), losses = one.filter((s) => s.res === "L");
+    const by = (arr, f) => arr.slice().sort((a, b) => f(b) - f(a))[0];
+    const hi = by(one, (s) => s.pf), lo = by(one.filter((s) => s.pf > 0), (s) => -s.pf);
+    const close = by(wins, (s) => -s.margin), blow = by(wins, (s) => s.margin);
+    const tough = by(losses, (s) => s.pf), lucky = by(wins, (s) => -s.pf);
+    const pow = D.perfs.filter((p) => p[0] === y && p[1] === w).sort((a, b) => b[4] - a[4])[0];
+    const lu = D.lineups.filter((l) => l[0] === y && l[1] === w).map((l) => ({ o: l[2], left: l[4] - l[3] }));
+    const bench = by(lu, (l) => l.left);
+    const perfect = lu.filter((l) => l.left < 0.01).map((l) => l.o);
+    // Upset: the winner had the worse record coming in.
+    let upset = null;
+    if (w > 1) for (const s of wins) {
+      const a = recordBefore(s.o, y, w), b = recordBefore(s.opp, y, w);
+      if (!a.n || !b.n) continue;
+      const gap = b.w / b.n - a.w / a.n;
+      if (gap > 0.15 && (!upset || gap > upset.gap)) upset = { s, a, b, gap };
+    }
+    const lead = upset
+      ? `Upset alert: ${esc(nm(upset.s.o))} (${upset.a.w}–${upset.a.l}) knocked off ${esc(nm(upset.s.opp))} (${upset.b.w}–${upset.b.l}), ${f2(upset.s.pf)} to ${f2(upset.s.pa)}.`
+      : blow ? `${esc(nm(blow.o))} ran over ${esc(nm(blow.opp))} by ${f2(blow.margin)}, the week's biggest margin.` : "";
+    const lead2 = hi ? ` ${esc(nm(hi.o))} posted the top score at ${f2(hi.pf)}${pow ? `, and ${esc(pname(pow[3]))} led all starters with ${f2(pow[4])}` : ""}.` : "";
+
+    // Standings movement (regular season only).
+    let movers = "";
+    if (wk.some((s) => s.g.k === "reg") && w > 1) {
+      const before = Object.fromEntries(table(y, w - 1).map((r) => [r.o, r.rank]));
+      const after = table(y, w);
+      movers = after.map((r) => {
+        const d = (before[r.o] || r.rank) - r.rank;
+        return `<div class="${r.o === ME ? "me" : ""}"><span>${r.rank}. ${esc(nm(r.o))}</span><span class="${d > 0 ? "pos" : d < 0 ? "neg" : "muted"}">${d > 0 ? "▲" + d : d < 0 ? "▼" + -d : "–"}</span></div>`;
+      }).join("");
+    }
+    // Active streaks of 3+ inside the season.
+    const streaks = [...new Set(wk.map((s) => s.o))].map((o) => {
+      const g = sides.filter((s) => s.o === o && s.g.y === y && s.g.w <= w).sort((a, b) => b.g.w - a.g.w);
+      let n = 0; for (const s of g) { if (s.res === g[0].res) n++; else break; }
+      return { o, res: g[0].res, n };
+    }).filter((s) => s.n >= 3 && s.res !== "T").sort((a, b) => b.n - a.n);
+    // Next week's games.
+    const nextGames = D.games.filter((g) => g.y === y && g.w === w + 1).map((g) => ({ a: g.a, b: g.b }))
+      .concat(D.liveWeek && D.liveWeek.year === y && D.liveWeek.week === w + 1 ? D.liveWeek.games : []);
+    const nextHtml = nextGames.map((g) => {
+      const [hw, hl] = h2hBefore(g.a, g.b, y, w + 1);
+      const ra = recordBefore(g.a, y, w + 1), rb = recordBefore(g.b, y, w + 1);
+      return `<div class="${g.a === ME || g.b === ME ? "me" : ""}"><span>${esc(nm(g.a))} <span class="muted">(${ra.w}–${ra.l})</span> vs ${esc(nm(g.b))} <span class="muted">(${rb.w}–${rb.l})</span></span><span>${hw + hl ? `series ${hw}–${hl}` : "first meeting"}</span></div>`;
+    }).join("");
+
+    let mine = "";
+    const my = wk.find((s) => s.o === ME);
+    if (my) {
+      const rank = one.slice().sort((a, b) => b.pf - a.pf).findIndex((s) => s.o === ME) + 1;
+      const myLu = lu.find((l) => l.o === ME);
+      const nx = nextGames.find((g) => g.a === ME || g.b === ME);
+      const opp = nx && (nx.a === ME ? nx.b : nx.a);
+      const [hw, hl] = opp ? h2hBefore(ME, opp, y, w + 1) : [0, 0];
+      mine = `<div class="nl-mine"><h3>Your week</h3><p>${my.res === "W" ? "You beat" : my.res === "L" ? "You lost to" : "You tied"} ${esc(nm(my.opp))}, ${f2(my.pf)}–${f2(my.pa)}.
+        ${rank ? `That was the ${ord(rank)}-highest score of the week.` : ""}
+        ${myLu && myLu.left >= 0.01 ? `You left ${f2(myLu.left)} points on your bench.` : myLu ? "You started your best possible lineup." : ""}
+        ${opp ? `Next up: ${esc(nm(opp))}${hw + hl ? `, and you're ${hw}–${hl} against them all-time` : ", for the first time"}.` : ""}</p></div>`;
+    }
+
+    const cell = (k, who_, v) => who_ ? `<div class="nl-award"><span class="eyebrow">${k}</span><b>${who_}</b><span class="num muted">${v}</span></div>` : "";
+    $("#nl-body").innerHTML = `
+      <header class="nl-head"><span class="eyebrow">The Gentlemen's Gazette · ${y} Week ${w}${isPlayoff(y, w) ? " · Playoffs" : ""}</span>
+        <p class="nl-lead">${lead}${lead2}</p></header>
+      ${mine}
+      <div class="nl-awards">
+        ${cell("High score", hi && esc(nm(hi.o)), hi && f2(hi.pf))}
+        ${cell("Low score", lo && esc(nm(lo.o)), lo && f2(lo.pf))}
+        ${cell("Closest game", close && `${esc(nm(close.o))} over ${esc(nm(close.opp))}`, close && `by ${f2(close.margin)}`)}
+        ${cell("Biggest blowout", blow && `${esc(nm(blow.o))} over ${esc(nm(blow.opp))}`, blow && `by ${f2(blow.margin)}`)}
+        ${cell("Most points in a loss", tough && esc(nm(tough.o)), tough && f2(tough.pf))}
+        ${cell("Fewest points in a win", lucky && esc(nm(lucky.o)), lucky && f2(lucky.pf))}
+        ${cell("Player of the week", pow && esc(pname(pow[3])), pow && `${f2(pow[4])} for ${esc(nm(pow[2]))}`)}
+        ${cell("Most points left on the bench", bench && bench.left >= 0.01 && esc(nm(bench.o)), bench && f2(bench.left))}
+        ${cell("Perfect lineup", perfect.length && perfect.map((o) => esc(nm(o))).join(", "), "best possible starters")}
+      </div>
+      <div class="nl-cols">
+        <div><h3>Results</h3><div class="list">${wk.filter((s) => s.res !== "L" && (s.res === "W" || s.o < s.opp)).map((s) =>
+          `<div class="${s.o === ME || s.opp === ME ? "me" : ""}"><span><b>${esc(nm(s.o))}</b> over ${esc(nm(s.opp))}${tag(s.g)}</span><span>${f2(s.pf)}–${f2(s.pa)}</span></div>`).join("")}</div></div>
+        ${movers ? `<div><h3>Standings</h3><div class="list">${movers}</div></div>` : ""}
+        <div>${streaks.length ? `<h3>Streak watch</h3><div class="list">${streaks.map((s) => `<div class="${s.o === ME ? "me" : ""}"><span>${esc(nm(s.o))}</span><span class="${s.res === "W" ? "pos" : "neg"}">${s.res === "W" ? "Won" : "Lost"} ${s.n} straight</span></div>`).join("")}</div>` : ""}
+          ${nextHtml ? `<h3 style="margin-top:16px">Next week</h3><div class="list">${nextHtml}</div>` : ""}</div>
+      </div>`;
+    $("#nl-share").onclick = async () => {
+      const url = location.href.split("#")[0] + `#week-${y}-${w}`;
+      const title = `The Gentlemen's Gazette: ${y} Week ${w}`;
+      try {
+        if (navigator.share) await navigator.share({ title, text: `${title} recap`, url });
+        else { await navigator.clipboard.writeText(url); $("#nl-share").textContent = "Link copied"; setTimeout(() => { $("#nl-share").textContent = "Share"; }, 2000); }
+      } catch { /* share sheet closed */ }
+    };
+  }
+  issue();
+}
+
+/* ---------- draft grades ---------- */
+{
+  const graded = D.drafts.filter((d) => d.snap);
+  $("#draft").hidden = !graded.length;
+  if (graded.length) {
+    const years = graded.map((d) => d.year).sort().reverse();
+    let year = years.includes(window.__draftYear) ? window.__draftYear : years[0];
+    let open = null;
+    const LETTERS = [[1.5, "A+"], [1.0, "A"], [0.6, "A−"], [0.25, "B+"], [-0.1, "B"], [-0.45, "B−"], [-0.8, "C+"], [-1.15, "C"], [-1.5, "C−"], [-Infinity, "D"]];
+    const gradeDraft = (d) => {
+      const N = d.picks.length, adp = d.snap.adp;
+      const a = (pid) => adp[pid] ?? N + 20;
+      const teams = {};
+      for (const p of d.picks) {
+        const t = (teams[p.o] ||= { o: p.o, picks: [], value: 0 });
+        const pick = { ...p, adp: adp[p.pid], diff: a(p.pid) - p.no };
+        t.picks.push(pick);
+        t.value += Math.max(0, N - a(p.pid));
+      }
+      const list = Object.values(teams);
+      const mean = sum(list.map((t) => t.value)) / list.length;
+      const sd = Math.sqrt(sum(list.map((t) => (t.value - mean) ** 2)) / list.length) || 1;
+      for (const t of list) {
+        t.z = (t.value - mean) / sd;
+        t.grade = LETTERS.find(([min]) => t.z >= min)[1];
+        const drafted = t.picks.filter((p) => !p.keeper);
+        t.best = drafted.slice().sort((x, y) => y.diff - x.diff)[0];
+        t.worst = drafted.slice().sort((x, y) => x.diff - y.diff)[0];
+        t.keepers = t.picks.filter((p) => p.keeper);
+      }
+      return list.sort((x, y) => y.value - x.value);
+    };
+    const pickLabel = (p, size) => `${p.round}.${String(((p.no - 1) % size) + 1).padStart(2, "0")}`;
+    const render = () => {
+      $("#draft-tabs").innerHTML = years.map((y) => `<button role="tab" aria-selected="${y === year}" data-year="${y}">${y}</button>`).join("");
+      const d = graded.find((x) => x.year === year);
+      const season = D.seasons.find((s) => s.year === year);
+      const teams = gradeDraft(d);
+      const size = teams.length;
+      if (!open || !teams.some((t) => t.o === open)) open = teams.some((t) => t.o === ME) ? ME : teams[0].o;
+      const all = teams.flatMap((t) => t.picks.filter((p) => !p.keeper));
+      const steal = all.slice().sort((a, b) => b.diff - a.diff)[0], reach = all.slice().sort((a, b) => a.diff - b.diff)[0];
+      const fmtPick = (p) => p ? `${esc(pname(p.pid))} <span class="muted num">${pickLabel(p, size)}, ADP ${p.adp != null ? Math.round(p.adp) : "—"}</span>` : "—";
+      $("#draft-callouts").innerHTML = `
+        <div class="panel nl-award"><span class="eyebrow">Steal of the draft</span><b>${fmtPick(steal)}</b><span class="muted">${esc(nm(steal.o))}, ${Math.round(steal.diff)} picks after ADP</span></div>
+        <div class="panel nl-award"><span class="eyebrow">Biggest reach</span><b>${fmtPick(reach)}</b><span class="muted">${esc(nm(reach.o))}, ${Math.round(-reach.diff)} picks before ADP</span></div>`;
+      $("#draft-table").innerHTML = `<thead><tr><th class="l">Grade</th><th class="l">Manager</th><th class="l">Best value</th><th class="l">Biggest reach</th><th class="l">Keepers</th>${season && season.done ? '<th class="l">Finish</th>' : ""}</tr></thead><tbody>${teams.map((t) => {
+        const f = season && season.done ? finish(season, t.o) : null;
+        return `<tr class="${t.o === ME ? "me" : ""} ${t.o === open ? "open" : ""}" data-team="${t.o}" tabindex="0">
+          <td class="l"><span class="grade">${t.grade}</span></td><td class="l">${who(t.o)}</td>
+          <td class="l">${fmtPick(t.best)}</td><td class="l">${fmtPick(t.worst)}</td>
+          <td class="l">${t.keepers.map((p) => esc(pname(p.pid))).join(", ") || '<span class="muted">—</span>'}</td>
+          ${f ? `<td class="l"><span class="chip ${f.cls}">${f.label}</span></td>` : ""}</tr>`;
+      }).join("")}</tbody>`;
+      const t = teams.find((x) => x.o === open);
+      $("#draft-detail").innerHTML = `<div class="series-head">${who(t.o, "")}<span class="grade big">${t.grade}</span><span class="muted">Draft class value ${Math.round(t.value)} · league average ${Math.round(sum(teams.map((x) => x.value)) / teams.length)}</span></div>
+        <div class="tbl-wrap"><table><thead><tr><th class="l">Pick</th><th class="l">Player</th><th class="l">Pos</th><th>ADP</th><th>Value</th></tr></thead><tbody>${t.picks.map((p) =>
+          `<tr><td class="l num">${pickLabel(p, size)}</td><td class="l">${esc(pname(p.pid))}${p.keeper ? ' <span class="chip">Keeper</span>' : ""}</td><td class="l muted">${ppos(p.pid) || p.pos}</td>
+           <td class="num">${p.adp != null ? p.adp.toFixed(1) : "—"}</td><td class="num ${p.keeper ? "muted" : p.diff >= 0 ? "pos" : "neg"}">${p.keeper ? "—" : (p.diff >= 0 ? "+" : "−") + Math.abs(Math.round(p.diff))}</td></tr>`).join("")}</tbody></table></div>`;
+      $("#draft-note").textContent = `Grades compare each roster to Sleeper's ADP, saved ${new Date(d.snap.taken_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}. Value is how many picks after ADP a player was taken; keepers count toward the roster but not toward steals and reaches.`;
+    };
+    $("#draft-tabs").onclick = (e) => { const b = e.target.closest("button[data-year]"); if (b) { year = window.__draftYear = b.dataset.year; render(); } };
+    const pickRow = (e) => { const r = e.target.closest("tr[data-team]"); if (r && !e.target.closest("button")) { open = r.dataset.team; render(); } };
+    $("#draft-table").onclick = pickRow;
+    $("#draft-table").onkeydown = (e) => { if (e.key === "Enter") pickRow(e); };
+    render();
+  }
+}
+
+/* ---------- trades ---------- */
+{
+  const T = D.trades;
+  $("#trades").hidden = !T.length;
+  if (T.length) {
+    const pidx = {};
+    for (const [y, w, o, pid, p] of D.perfs) (pidx[o + "|" + pid] ||= []).push([y, w, p]);
+    const after = (o, pid, y, w0) => (pidx[o + "|" + pid] || []).filter(([yy, ww]) => yy > y || (yy === y && ww >= w0));
+    const scored = T.map((t) => {
+      const sidesOut = t.sides.map((s) => {
+        const assets = [
+          ...s.players.map((pid) => ({ label: esc(pname(pid)), pos: ppos(pid), games: after(s.o, pid, t.y, t.leg) })),
+          ...s.picks.map((pk) => ({ label: `${pk.season} round ${pk.round} pick${pk.orig && pk.orig !== s.o ? ` (${esc(nm(pk.orig))}'s)` : ""}${pk.pid ? ` → ${esc(pname(pk.pid))}` : " (not yet used)"}`,
+            pos: pk.pid ? ppos(pk.pid) : "", games: pk.pid ? after(s.o, pk.pid, pk.season, 1) : [] })),
+        ].map((a) => ({ ...a, pts: sum(a.games.map((g) => g[2])) }));
+        return { ...s, assets, pts: sum(assets.map((a) => a.pts)) };
+      }).sort((a, b) => b.pts - a.pts);
+      const played = sidesOut.some((s) => s.assets.some((a) => a.games.length));
+      const margin = sidesOut.length > 1 ? sidesOut[0].pts - sidesOut[1].pts : 0;
+      return { ...t, sides: sidesOut, margin, played, winner: !t.reversed && played && margin >= 1 ? sidesOut[0].o : null };
+    });
+
+    // Trade record per manager.
+    const rec = {};
+    for (const t of scored.filter((x) => !x.reversed)) for (const s of t.sides) {
+      const r = (rec[s.o] ||= { o: s.o, n: 0, w: 0, l: 0, net: 0 });
+      r.n++;
+      if (t.winner === s.o) r.w++; else if (t.winner) r.l++;
+      if (t.sides.length === 2) r.net += s.pts - t.sides.find((x) => x !== s).pts;
+    }
+    $("#tr-summary").innerHTML = `<thead><tr><th class="l">Manager</th><th>Trades</th><th>Won</th><th>Lost</th><th>Net points</th></tr></thead><tbody>${Object.values(rec).sort((a, b) => b.net - a.net).map((r) =>
+      `<tr class="${r.o === ME ? "me" : ""}"><td class="l">${who(r.o)}</td><td class="num">${r.n}</td><td class="num">${r.w}</td><td class="num">${r.l}</td><td class="num ${r.net >= 0 ? "pos" : "neg"}">${r.net >= 0 ? "+" : "−"}${f1(Math.abs(r.net))}</td></tr>`).join("")}</tbody>`;
+
+    const traders = [...new Set(scored.flatMap((t) => t.sides.map((s) => s.o)))].sort((a, b) => nm(a).localeCompare(nm(b), undefined, { sensitivity: "base" }));
+    if (window.__trMgr === undefined) window.__trMgr = ME && traders.includes(ME) ? ME : "";
+    $("#tr-mgr").innerHTML = `<option value="">All managers</option>` + traders.map((o) => `<option value="${o}">${esc(nm(o))}${o === ME ? " (you)" : ""}</option>`).join("");
+    $("#tr-mgr").value = traders.includes(window.__trMgr) ? window.__trMgr : "";
+    $("#tr-sort").value = window.__trSort || "new";
+    const date = (ms) => new Date(ms).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+    const list = () => {
+      const m = $("#tr-mgr").value, sort = $("#tr-sort").value;
+      const rows = scored.filter((t) => !m || t.sides.some((s) => s.o === m))
+        .sort(sort === "lopsided" ? (a, b) => (a.reversed - b.reversed) || b.margin - a.margin : (a, b) => b.created - a.created);
+      $("#tr-count").textContent = `${rows.length} trade${rows.length === 1 ? "" : "s"}`;
+      $("#tr-list").innerHTML = rows.map((t) => {
+        const total = sum(t.sides.map((s) => s.pts)) || 1;
+        const verdict = t.reversed ? '<span class="chip">Reversed</span>' : !t.played ? '<span class="chip">Too early to call</span>'
+          : t.winner ? `<span class="chip win">${esc(nm(t.winner))} by ${f1(t.margin)}</span>` : '<span class="chip">Even</span>';
+        return `<article class="panel trade ${t.sides.some((s) => s.o === ME) ? "mine" : ""} ${t.reversed ? "reversed" : ""}">
+          <div class="trade-head"><span class="muted">${date(t.created)} · ${t.y} Week ${t.leg}</span>${verdict}</div>
+          <div class="bar">${t.sides.map((s, i) => `<span class="seg s${i}" style="flex:${Math.max(s.pts, total * 0.02)}"></span>`).join("")}</div>
+          <div class="trade-sides">${t.sides.map((s, i) => `<div class="side-col">
+            <div class="side-top"><span class="key s${i}"></span>${who(s.o)}<span class="num">${f1(s.pts)} pts</span></div>
+            <p class="muted small">Received</p>
+            ${s.assets.map((a) => `<details><summary><span>${a.label} <span class="muted">${a.pos || ""}</span></span><span class="num">${f1(a.pts)}${a.games.length ? ` · ${a.games.length} starts` : ""}</span></summary>
+              <div class="wk-chips">${a.games.length ? a.games.map(([yy, ww, p]) => `<span>${yy !== t.y ? yy + " " : ""}Wk ${ww}: <b class="num">${f1(p)}</b></span>`).join("") : '<span class="muted">No starts for this team yet.</span>'}</div></details>`).join("")}
+            ${s.faab ? `<p class="small">$${s.faab} FAAB</p>` : ""}
+          </div>`).join("")}</div></article>`;
+      }).join("") || '<p class="muted">No trades match.</p>';
+    };
+    $("#tr-mgr").onchange = () => { window.__trMgr = $("#tr-mgr").value; list(); };
+    $("#tr-sort").onchange = () => { window.__trSort = $("#tr-sort").value; list(); };
+    list();
+  }
+}
+
 /* ---------- this week's live scoreboard ---------- */
 {
   const lw = D.liveWeek;
@@ -624,7 +989,8 @@ function renderProfile(id) {
   if (show) {
     const started = lw.games.some((g) => g.pa || g.pb);
     $("#sb-title").textContent = `Week ${lw.week} scoreboard${started ? " · live" : " · not started"}`;
-    $("#scoreboard").innerHTML = lw.games.map((g) => `<div class="panel sb">${[[g.a, g.pa, g.pb], [g.b, g.pb, g.pa]].map(([o, p, q]) =>
+    const gamesSorted = lw.games.slice().sort((x, y) => (y.a === ME || y.b === ME) - (x.a === ME || x.b === ME));
+    $("#scoreboard").innerHTML = gamesSorted.map((g) => `<div class="panel sb ${g.a === ME || g.b === ME ? "mine" : ""}">${[[g.a, g.pa, g.pb], [g.b, g.pb, g.pa]].map(([o, p, q]) =>
       `<div class="${started && p > q ? "lead" : ""}">${who(o)}<span class="num">${f2(p)}</span></div>`).join("")}</div>`).join("");
   }
 }
@@ -646,8 +1012,16 @@ async function load(force) {
   $("#status").textContent = "Updating from Sleeper…";
   try {
     const [raw, players] = await Promise.all([fetchHistory(force), fetchPlayers()]);
-    render(compute(raw, players));
+    const snaps = await fetchSnapshots(raw.map((s) => s.league.season));
+    render(compute(raw, players, snaps));
+    const first = $("#app").hidden;
     $("#loading").hidden = true; $("#app").hidden = false;
+    // Content arrives after the browser's own jump to #anchor, so do the jump once it exists.
+    if (first && location.hash.length > 1) {
+      const id = location.hash.slice(1);
+      const el = document.getElementById(id.startsWith("week-") ? "newsletter" : id);
+      if (el) el.scrollIntoView();
+    }
     row.className = "status-row ok";
     $("#status").textContent = updateReady ? "A new version of the Hall of Fame is ready."
       : `Live from Sleeper · updated ${new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
@@ -671,7 +1045,46 @@ function noteScores() {
 }
 let lastData = null;
 const _render = render;
-render = (D) => { lastData = D; _render(D); noteScores(); };
+render = (D) => { lastData = D; _render(D); noteScores(); if ($("#me-area").dataset.mode !== "form") renderMe(); };
+
+// "Sign in" is just saying which Sleeper account you are. All league data is public, so no password is involved.
+const ME_KEY = "hof:me";
+try { window.__me = localStorage.getItem(ME_KEY) || null; } catch { window.__me = null; }
+function rerender() { window.__trMgr = undefined; if (lastData) render(lastData); }
+function renderMe() {
+  const area = $("#me-area");
+  const m = window.__me && lastData && lastData.managers[window.__me];
+  if (m) {
+    area.innerHTML = '<span>Signed in as <b></b></span><button class="btn" type="button" id="me-out">Sign out</button>';
+    area.querySelector("b").textContent = m.name;
+    $("#me-out").onclick = () => { window.__me = null; try { localStorage.removeItem(ME_KEY); } catch { /* blocked */ } rerender(); };
+  } else if (area.dataset.mode === "form") {
+    area.innerHTML = `<form id="me-form" class="me-form"><label for="me-input" class="sr">Sleeper username</label>
+      <input id="me-input" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="Sleeper username" required>
+      <button class="btn">Sign in</button><button class="btn" type="button" id="me-cancel">Cancel</button><span id="me-err" role="status"></span></form>`;
+    $("#me-input").focus();
+    $("#me-cancel").onclick = () => { area.dataset.mode = ""; renderMe(); };
+    $("#me-form").onsubmit = async (e) => {
+      e.preventDefault();
+      const u = $("#me-input").value.trim();
+      if (!u) return;
+      $("#me-err").textContent = "Checking…";
+      try {
+        const r = await fetch(API + "user/" + encodeURIComponent(u));
+        const user = r.ok ? await r.json() : null;
+        if (!user || !user.user_id) { $("#me-err").textContent = "No Sleeper account has that username."; return; }
+        if (!lastData || !lastData.managers[user.user_id]) { $("#me-err").textContent = `${user.display_name || u} isn't in this league.`; return; }
+        window.__me = user.user_id;
+        try { localStorage.setItem(ME_KEY, user.user_id); } catch { /* remembered for this visit only */ }
+        area.dataset.mode = "";
+        rerender();
+      } catch { $("#me-err").textContent = "Couldn't reach Sleeper. Try again."; }
+    };
+  } else {
+    area.innerHTML = '<button class="btn" type="button" id="me-in">Sign in</button>';
+    $("#me-in").onclick = () => { area.dataset.mode = "form"; renderMe(); };
+  }
+}
 
 function schedule() {
   setTimeout(async () => {
