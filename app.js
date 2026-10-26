@@ -922,13 +922,25 @@ function renderProfile(id) {
   if (T.length) {
     const pidx = {};
     for (const [y, w, o, pid, p] of D.perfs) (pidx[o + "|" + pid] ||= []).push([y, w, p]);
-    const after = (o, pid, y, w0) => (pidx[o + "|" + pid] || []).filter(([yy, ww]) => yy > y || (yy === y && ww >= w0));
+    // A player counts for a trade only while that trade kept him on the roster: the rest of that season,
+    // later seasons only if he was kept as a keeper each year, and never after he's traded away.
+    const kept = new Set();
+    for (const d of D.drafts) for (const p of d.picks) if (p.keeper) kept.add(`${d.year}|${p.o}|${p.pid}`);
+    const years = D.seasons.map((s) => s.year).sort();
+    const tenure = (o, pid, y, w0, created) => {
+      const out = D.trades.filter((u) => u.created > created && !u.reversed && u.sides.some((s) => s.o === o)
+        && u.sides.some((s) => s.o !== o && s.players.includes(pid))).sort((a, b) => a.created - b.created)[0];
+      const ok = new Set([y]);
+      for (const yy of years.filter((x) => x > y)) { if (kept.has(`${yy}|${o}|${pid}`)) ok.add(yy); else break; }
+      return (pidx[o + "|" + pid] || []).filter(([yy, ww]) => ok.has(yy) && (yy > y || ww >= w0)
+        && (!out || yy < out.y || (yy === out.y && ww < out.leg)));
+    };
     const scored = T.map((t) => {
       const sidesOut = t.sides.map((s) => {
         const assets = [
-          ...s.players.map((pid) => ({ label: esc(pname(pid)), pos: ppos(pid), games: after(s.o, pid, t.y, t.leg) })),
+          ...s.players.map((pid) => ({ label: esc(pname(pid)), pos: ppos(pid), games: tenure(s.o, pid, t.y, t.leg, t.created) })),
           ...s.picks.map((pk) => ({ label: `${pk.season} round ${pk.round} pick${pk.orig && pk.orig !== s.o ? ` (${esc(nm(pk.orig))}'s)` : ""}${pk.pid ? ` → ${esc(pname(pk.pid))}` : " (not yet used)"}`,
-            pos: pk.pid ? ppos(pk.pid) : "", games: pk.pid ? after(s.o, pk.pid, pk.season, 1) : [] })),
+            pos: pk.pid ? ppos(pk.pid) : "", games: pk.pid ? tenure(s.o, pk.pid, pk.season, 1, t.created) : [] })),
         ].map((a) => ({ ...a, pts: sum(a.games.map((g) => g[2])) }));
         return { ...s, assets, pts: sum(assets.map((a) => a.pts)) };
       }).sort((a, b) => b.pts - a.pts);
