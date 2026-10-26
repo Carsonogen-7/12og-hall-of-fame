@@ -169,22 +169,16 @@ function compute(raw, P, snaps = {}) {
         (rounds[b.r] ||= []).push([r2o[b.t1], r2o[b.t2], r2o[b.w]]);
       }
       info.bracket = Object.keys(rounds).sort((a, b) => a - b).map((k) => rounds[k]);
-      // Some seasons played the last round over two weeks; detect it from the final's result.
-      const lastWk = pws + info.bracket.length - 1;
-      const nxt = Object.fromEntries((s.matchups[lastWk + 1] || []).map((x) => [r2o[x.roster_id], x.points || 0]));
-      const fo = new Set([r2o[f.t1], r2o[f.t2]]);
-      const fg = yearGames.find((g) => g.w === lastWk && fo.has(g.a) && fo.has(g.b));
-      if (fg && Object.keys(nxt).length && (fg.pa > fg.pb) !== (fg.a === r2o[f.w])) {
-        info.twoWeekFinal = true;
-        for (const g of yearGames) if (g.w === lastWk) {
-          g.pa = +(g.pa + (nxt[g.a] || 0)).toFixed(2); g.pb = +(g.pb + (nxt[g.b] || 0)).toFixed(2); g.w2 = true;
-        }
-      }
       // Tag playoff games: championship bracket, final, or consolation.
       const wb = new Map();
       for (const b of s.winners) if (typeof b.t1 === "number" && typeof b.t2 === "number") wb.set([r2o[b.t1], r2o[b.t2]].sort().join("|") + "#" + b.r, b);
       for (const g of yearGames) if (g.k === "po") {
         const b = wb.get([g.a, g.b].sort().join("|") + "#" + (g.w - pws + 1));
+        // Sleeper's box scores include later stat corrections, but the bracket keeps the result as it
+        // was decided. When they disagree, the bracket's winner stands.
+        if (b && typeof b.w === "number" && g.pa !== g.pb && (g.pa > g.pb ? g.a : g.b) !== r2o[b.w]) {
+          g.win = r2o[b.w]; g.corrected = true;
+        }
         g.k = b && (b.p == null || b.p === 1) ? (b.p === 1 ? "final" : "po") : "cons";
       }
     } else if (done) {
@@ -277,8 +271,8 @@ const live = D.seasons.find((s) => !s.done);
 const nm = (id) => M[id].name;
 const av = (id, cls = "") => D.avatars[id] ? `<img class="av ${cls}" src="${D.avatars[id]}" alt="" loading="lazy">` : `<span class="av ${cls}"></span>`;
 const who = (id, cls = "sm") => `<button class="mgr mgr-link" data-mgr="${id}">${av(id, cls)}<span class="nm">${esc(nm(id))}</span></button>`;
-const tag = (g) => g.k === "final" ? " · Final" : g.k === "po" ? " · Playoffs" : g.k === "cons" ? " · Consolation" : "";
-const wk = (g) => g.w2 ? `${g.w}–${g.w + 1}` : `${g.w}`;
+const tag = (g) => (g.k === "final" ? " · Final" : g.k === "po" ? " · Playoffs" : g.k === "cons" ? " · Consolation" : "") + (g.corrected ? " · stat-corrected" : "");
+const wk = (g) => `${g.w}`;
 const when = (g) => `${g.y} Wk ${wk(g)}${tag(g)}`;
 const pname = (pid) => (D.players[pid] || [pid])[0];
 const ppos = (pid) => (D.players[pid] || ["", ""])[1];
@@ -292,9 +286,13 @@ for (const g of D.games) {
   sides.push({ g, o: g.a, opp: g.b, pf: g.pa, pa: g.pb });
   sides.push({ g, o: g.b, opp: g.a, pf: g.pb, pa: g.pa });
 }
-sides.forEach((s) => { s.res = s.pf > s.pa ? "W" : s.pf < s.pa ? "L" : "T"; s.margin = s.pf - s.pa; });
-// Two-week finals count for wins and losses but not for single-game records.
-const single = sides.filter((s) => !s.g.w2);
+sides.forEach((s) => {
+  s.res = s.g.win ? (s.g.win === s.o ? "W" : "L") : s.pf > s.pa ? "W" : s.pf < s.pa ? "L" : "T";
+  s.margin = s.pf - s.pa;
+});
+const single = sides;
+// Games whose result a later stat correction contradicts stay out of margin-based records.
+const decided = sides.filter((s) => !s.g.corrected);
 
 // All-play per regular-season week.
 const weeks = {};
@@ -377,7 +375,8 @@ function finish(season, id) {
     return `<article class="panel plaque champ">
       <div class="yr">${s.year}</div>
       <div class="who">${av(s.champ)}<div><b>${esc(nm(s.champ))}</b><span class="muted">${esc(team)}</span></div></div>
-      ${cs ? `<p class="final-score">Beat ${esc(nm(s.runner))} ${f2(cs[0])}–${f2(cs[1])} in Week ${wk(g)}</p>` : ""}
+      ${cs && g.corrected ? `<p class="final-score">Won the Week ${g.w} final over ${esc(nm(s.runner))}. A later stat correction made it ${f2(cs[0])}–${f2(cs[1])}, but Sleeper kept the title result.</p>`
+        : cs ? `<p class="final-score">Beat ${esc(nm(s.runner))} ${f2(cs[0])}–${f2(cs[1])} in Week ${g.w}</p>` : ""}
       <dl><dt>Seed</dt><dd class="num">${ord(seed)}</dd><dt>Runner-up</dt><dd>${esc(nm(s.runner))}</dd><dt>3rd place</dt><dd>${esc(nm(s.third))}</dd><dt>Toilet Bowl</dt><dd>${esc(nm(s.sacko))}</dd></dl>
     </article>`;
   });
@@ -453,7 +452,7 @@ if (live) {
 /* ---------- record book ---------- */
 {
   const top = (arr, f, n = 5) => arr.slice().sort((a, b) => f(b) - f(a)).slice(0, n);
-  const winners = single.filter((s) => s.res === "W");
+  const winners = decided.filter((s) => s.res === "W");
   const card = (title, big, unit, ctx, list) => `<article class="panel rec">
     <h3>${title}</h3><div class="big">${big}<small>${unit}</small></div><p class="ctx">${ctx}</p>
     ${list ? `<ol>${list.map(([a, b]) => `<li><span>${a}</span><span>${b}</span></li>`).join("")}</ol>` : ""}</article>`;
@@ -475,11 +474,11 @@ if (live) {
   out.push(card("Closest game", f2(cl[0].margin), "margin", `${esc(nm(cl[0].o))} ${f2(cl[0].pf)}, ${esc(nm(cl[0].opp))} ${f2(cl[0].pa)} · ${when(cl[0].g)}`,
     cl.slice(1).map((s) => [`${esc(nm(s.o))} over ${esc(nm(s.opp))} · ${s.g.y}`, f2(s.margin)])));
 
-  const comb = D.games.filter((g) => !g.w2).sort((a, b) => (b.pa + b.pb) - (a.pa + a.pb)).slice(0, 5);
+  const comb = D.games.slice().sort((a, b) => (b.pa + b.pb) - (a.pa + a.pb)).slice(0, 5);
   out.push(card("Highest-scoring game", f2(comb[0].pa + comb[0].pb), "combined", `${esc(nm(comb[0].a))} ${f2(comb[0].pa)}, ${esc(nm(comb[0].b))} ${f2(comb[0].pb)} · ${when(comb[0])}`,
     comb.slice(1).map((g) => [`${esc(nm(g.a))} vs ${esc(nm(g.b))} · ${g.y}`, f2(g.pa + g.pb)])));
 
-  const ml = top(single.filter((s) => s.res === "L"), (s) => s.pf, 5);
+  const ml = top(decided.filter((s) => s.res === "L"), (s) => s.pf, 5);
   out.push(card("Most points in a loss", f2(ml[0].pf), "pts", `${esc(nm(ml[0].o))} lost to ${esc(nm(ml[0].opp))} (${f2(ml[0].pa)}) · ${when(ml[0].g)}`,
     ml.slice(1).map((s) => [`${esc(nm(s.o))} · ${when(s.g)}`, f2(s.pf)])));
 
@@ -623,7 +622,7 @@ function renderProfile(id) {
   current = id;
   const c = C[id]; const m = M[id];
   document.querySelectorAll("#picker button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.pick === id));
-  const mine = c.mine.filter((s) => !s.g.w2);
+  const mine = c.mine;
   const best = mine.slice().sort((a, b) => b.pf - a.pf)[0];
   const worst = mine.filter((s) => s.pf > 0).sort((a, b) => a.pf - b.pf)[0];
   const rivals = IDS.filter((o) => o !== id).map((o) => { const g = series(id, o); return { o, n: g.length, w: g.filter((s) => s.res === "W").length, l: g.filter((s) => s.res === "L").length }; }).filter((r) => r.n);
@@ -705,7 +704,7 @@ function renderProfile(id) {
   out.push(honor("Robbed", "Most points for in a season without making the playoffs.", robbed.r.o, `${f1(robbed.r.pf)} PF in ${robbed.y} (${robbed.r.w}–${robbed.r.l})`));
   const cinder = done.map((s) => ({ y: s.year, o: s.champ, seed: s.standings.find((r) => r.o === s.champ).seed })).sort((a, b) => b.seed - a.seed)[0];
   out.push(honor("Cinderella", "Lowest seed to win the title.", cinder.o, `${ord(cinder.seed)} seed, ${cinder.y} champion`));
-  const finals = D.games.filter((g) => g.k === "final").map((g) => ({ g, m: Math.abs(g.pa - g.pb), l: g.pa > g.pb ? g.b : g.a })).sort((a, b) => a.m - b.m)[0];
+  const finals = D.games.filter((g) => g.k === "final" && !g.corrected).map((g) => ({ g, m: Math.abs(g.pa - g.pb), l: g.pa > g.pb ? g.b : g.a })).sort((a, b) => a.m - b.m)[0];
   if (finals) out.push(honor("So Close", "Narrowest loss in a championship game.", finals.l, `Lost the ${finals.g.y} final by ${f2(finals.m)}`));
   $("#honors").innerHTML = out.join("");
 }
@@ -749,8 +748,8 @@ function renderProfile(id) {
     $("#nl-week").value = key(sel);
     const [y, w] = sel;
     const wk = sides.filter((s) => s.g.y === y && s.g.w === w);
-    const one = wk.filter((s) => !s.g.w2);
-    const wins = one.filter((s) => s.res === "W"), losses = one.filter((s) => s.res === "L");
+    const one = wk;
+    const wins = one.filter((s) => s.res === "W" && !s.g.corrected), losses = one.filter((s) => s.res === "L" && !s.g.corrected);
     const by = (arr, f) => arr.slice().sort((a, b) => f(b) - f(a))[0];
     const hi = by(one, (s) => s.pf), lo = by(one.filter((s) => s.pf > 0), (s) => -s.pf);
     const close = by(wins, (s) => -s.margin), blow = by(wins, (s) => s.margin);
